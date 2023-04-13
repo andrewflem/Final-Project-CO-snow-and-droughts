@@ -61,6 +61,13 @@ for filename in filenames:
     except:
         data_snow= data_snow_small
 
+
+# Make non-winter months NaN        
+data_snow.loc[~((data_snow.index.month >= 12) | (data_snow.index.month <= 3))] = pd.NA
+data_snow = data_snow.dropna()
+
+data_snow = data_snow['1997-01-01':'2022-12-31']
+
 #%% Load soil moisture data
 
 #Specify folder name and variable names
@@ -101,6 +108,39 @@ data_sm['SM10'] = data_sm['SM10'].fillna((data_sm['SM5'] +data_sm['SM20'])/2)
 data_sm['SM20'] = data_sm['SM20'].fillna((data_sm['SM10'] +data_sm['SM50'])/2)
 data_sm['SM50'] = data_sm['SM50'].fillna((data_sm['SM20'] +data_sm['SM100'])/2)
 data_sm['SM100'] = data_sm['SM100'].fillna(data_sm['SM50'])
+
+#Integrating  data       
+data_sm['tot_soilmoisture'] = np.trapz(data_sm[['SM5', 'SM10', 'SM20', 'SM50', 'SM100']])
+
+#Isolate SM to summer months
+data_sm.loc[~((data_sm.index.month >= 6) | (data_sm.index.month <= 9))] = pd.NA
+data_sm = data_sm.dropna()
+
+#%% Creating annual data frame for SWE
+    
+#Counting Number of non-null values
+nonnan_count = data_snow.notnull().groupby(data_snow.index.year).sum()
+
+#Create new data frame
+dfscan_fill1 = data_snow.interpolate()
+
+#Calculate values
+dfannual_SWE = dfscan_fill1[['SWE_cm']].groupby(data_snow.index.year).sum()
+
+#%% Annual data frame for SM
+
+#Counting Number of non-null values
+nonnan_count = data_sm.notnull().groupby(data_sm.index.year).sum()
+
+#Create new data frame
+dfscan_fill2 = data_sm.interpolate()
+
+#Calculate values
+dfannual_SM = dfscan_fill2[['tot_soilmoisture']].groupby(data_sm.index.year).sum()
+
+#%% Combine data frames
+
+dfannual = dfannual_SWE['SWE_cm'],dfannual_SM['tot_soilmoisture']
 
 #%%Create Time Series Plot for SWE
 
@@ -162,3 +202,107 @@ ax2.legend()                                   # legend
 
 # Optional command to make x-tick labels diagonal to avoid overlap
 fig2.autofmt_xdate() 
+
+#%%Plot SM vs SWE
+
+# Create plot 
+fig3, ax3 = plt.subplots()
+
+# Plot another data series
+ax3.plot(dfannual_SM['tot_soilmoisture'], dfannual_SWE['SWE_cm'],  # x = 1st series, y = 2nd series)
+        'bo',                            # Line Format
+        label = '10cm')         # series label for legend
+
+# Add plot components 
+ax3.set_xlabel('SM')         # x-axis label 
+ax3.set_ylabel('SWE')          # y-axis label
+ax3.set_title('SM vs. SWE') # figure title
+ax3.legend()                                   # legend
+
+# Optional command to make x-tick labels diagonal to avoid overlap
+fig3.autofmt_xdate() 
+
+#%%Plotting
+
+start_date = '1996-10-01'
+end_date = '2022-09-30'
+
+#Figure 1 time series
+for i,v in enumerate(start_date):
+    dataplot= data_sm[start_date:end_date] 
+    fig, (ax1,ax2,ax3) = plt.subplots(3,
+                                1, figsize=(10,16), sharex = True)
+
+# Plot a Soil Moisture
+    ax1.plot(dataplot['SM5'], 'ko', label= "5cm")  
+    ax1.plot(dataplot['SM10'], 'ro', label= "10cm")  
+    ax1.plot(dataplot['SM20'], 'bo', label= "20cm")  
+    ax1.plot(dataplot['SM50'], 'yo', label= "50cm")  
+    ax1.plot(dataplot['SM100'], 'go', label= "100cm")  
+          
+    ax1.legend(loc='center left',bbox_to_anchor= (1.0, 0.5))
+    
+# Add y-axis label    
+    ax1.set_ylabel('Soil Moisture')   
+    
+# Add plot title
+    ax1.set_title('Soil Moisture')
+    
+# Plot b Integrated SM
+    ax2.plot(dataplot['tot_soilmoisture'], 'b-')
+    ax2.set_ylabel('Integrated SM')
+
+#Plot c Precip
+    ax3.plot(data_snow['SWE_cm'], 'r-')
+    ax3.set_ylabel('SWE (cm)')
+    
+
+#%% Linear Regression  
+#dfannual = dfannual.dropna()
+
+#Create function
+def regressplot(time_series,data_series, y_label, figtitle):
+
+    #Calculate parametric linear regression values
+    lsq_coeff = stats.linregress(time_series,data_series)
+    
+    #Calculate non-parametric regression values
+    sen_coeff = stats.theilslopes(data_series,time_series, 0.95)
+    
+    #Calculate non-parametric correlation
+    tau = stats.kendalltau(time_series,data_series)
+
+    #Create plot and show time eries of input data series
+    fig, ax = plt.subplots()
+    ax.plot(data_series, 'k.')
+    #Parametric best fit line
+    ax.plot(time_series, lsq_coeff.intercept + lsq_coeff.slope *
+           time_series, 'b-', label='Linear regression')
+    #Annotation Placement
+    xx = ax.get_xlim()
+    yy = ax.get_ylim()
+
+    #Display least squares sparametric slope and correlation on graph
+    ax.annotate(f'Least-squares slope = {lsq_coeff.slope:.4f} +/- {2*lsq_coeff.stderr:.4f}',
+                xy=(xx[1]-0.05*(xx[1]-xx[0]), yy[0] + 0.18*(yy[1]-yy[0])),
+                horizontalalignment='right')
+    ax.annotate(f'Least-squares correlation = {lsq_coeff.rvalue:.4f}; p = {lsq_coeff.pvalue:.4f}',
+                xy=(xx[1]-0.05*(xx[1]-xx[0]), yy[0] + 0.13*(yy[1]-yy[0])),
+                horizontalalignment='right')
+
+    #Non-parametric best fit line
+    ax.plot(time_series, sen_coeff.intercept + sen_coeff.slope *
+               time_series, 'y-', label='Theil-Sen regression')
+
+    #Display non-parametric slope and correlation on graph
+    ax.annotate(f'Theil-Sen slope = {sen_coeff.slope:.4f} +/- {0.5*(sen_coeff.high_slope - sen_coeff.low_slope):.4f}',
+                    xy=(xx[1]-0.05*(xx[1]-xx[0]), yy[0] + 0.08*(yy[1]-yy[0])),
+                    horizontalalignment='right')
+    ax.annotate(f'Tau correlation = {tau.correlation:.4f}; p = {tau.pvalue:.4f}',
+                    xy=(xx[1]-0.05*(xx[1]-xx[0]), yy[0] + 0.03*(yy[1]-yy[0])),
+                    horizontalalignment='right')
+
+    ax.set_title(figtitle)
+    ax.set_ylabel(y_label)
+    ax.legend(loc='upper center')
+    plt.show()
